@@ -1,4 +1,5 @@
 import enum
+import os
 import sys
 
 class Token:
@@ -38,6 +39,7 @@ class Scanner:
         "var": "VAR",
         "while": "WHILE"
     }
+
 
     def is_at_end(self):
         return self.current >= len(self.source)
@@ -182,7 +184,40 @@ class Scanner:
         return self.tokens
 
 
+class Expression:
+    pass
 
+class Binary(Expression):
+    def __init__(self, left, operator, right):
+        self.left = left
+        self.operator = operator
+        self.right = right
+
+class Literal(Expression):
+    def __init__(self, value):
+        self.value = value
+
+class Grouping(Expression):
+    def __init__(self, expression):
+        self.expression = expression
+
+class Unary(Expression):
+    def __init__(self, operator, right):
+        self.operator = operator
+        self.right = right
+
+class ASTprinter:
+    def print(self, expression):
+        if isinstance(expression, Binary):
+            return f"({self.print(expression.left)} {expression.operator} {self.print(expression.right)})"
+        elif isinstance(expression, Literal):
+            return str(expression.value)
+        elif isinstance(expression, Grouping):
+            return f"({self.print(expression.expression)})"
+        elif isinstance(expression, Unary):
+            return f"({expression.operator} {self.print(expression.right)})"
+        else:
+            return ""
 
 
 # main loop
