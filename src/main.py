@@ -165,9 +165,6 @@ class Scanner:
                 self.line += 1
             case '"':
                 self.string()
-            case 'o':
-                if self.match("r"):
-                    self.tokens.append(Token("OR", "or", None, self.line))
             case _:
                 if self.isDigit(c):
                     self.number()
@@ -219,6 +216,115 @@ class ASTprinter:
         else:
             return ""
 
+class Parser:
+    def __init__(self, tokens):
+        self.tokens = tokens
+        self.current = 0
+
+    def parse(self):
+        expression = self.expression()
+        if not self.check("EOF"):
+            token = self.peek()
+            raise SyntaxError(
+                f"Unexpected token {token.lexeme!r} on line {token.line}"
+            )
+        return expression
+
+    def match(self, *types):
+        for token_type in types:
+            if self.check(token_type):
+                self.advance()
+                return True
+        return False
+
+    def check(self, token_type):
+        return self.peek().type == token_type
+
+    def advance(self):
+        if not self.is_at_end():
+            self.current += 1
+        return self.previous()
+
+    def is_at_end(self):
+        return self.peek().type == "EOF"
+
+    def peek(self):
+        return self.tokens[self.current]
+
+    def previous(self):
+        return self.tokens[self.current - 1]
+
+    def expression(self):
+        return self.equality()
+
+    def equality(self):
+        expr = self.comparison()
+        while self.match("BANG_EQUAL", "EQUAL_EQUAL"):
+            operator = self.previous()
+            right = self.comparison()
+            expr = Binary(expr, operator.lexeme, right)
+        return expr
+
+    def comparison(self):
+        expr = self.term()
+        while self.match("GREATER", "GREATER_EQUAL", "LESS", "LESS_EQUAL"):
+            operator = self.previous()
+            right = self.term()
+            expr = Binary(expr, operator.lexeme, right)
+        return expr
+
+    def term(self):
+        expr = self.factor()
+        while self.match("MINUS", "PLUS"):
+            operator = self.previous()
+            right = self.factor()
+            expr = Binary(expr, operator.lexeme, right)
+        return expr
+
+    def factor(self):
+        expr = self.unary()
+        while self.match("SLASH", "STAR"):
+            operator = self.previous()
+            right = self.unary()
+            expr = Binary(expr, operator.lexeme, right)
+        return expr
+
+    def unary(self):
+        if self.match("BANG", "MINUS"):
+            operator = self.previous()
+            right = self.unary()
+            return Unary(operator.lexeme, right)
+        return self.primary()
+
+    def primary(self):
+        if self.match("FALSE"):
+            return Literal(False)
+        if self.match("TRUE"):
+            return Literal(True)
+        if self.match("NIL"):
+            return Literal(None)
+        if self.match("NUMBER", "STRING"):
+            return Literal(self.previous().literal)
+        if self.match("LEFT_PAREN"):
+            expr = self.expression()
+            if not self.match("RIGHT_PAREN"):
+                raise SyntaxError(
+                    f"Expected ')' after expression on line {self.peek().line}"
+                )
+            return Grouping(expr)
+        token = self.peek()
+        raise SyntaxError(
+            f"Expected an expression on line {token.line}; "
+            f"found {token.lexeme or token.type}"
+        )
+
+
+def parse_and_print(source):
+    try:
+        expression = Parser(Scanner(source).scanTokens()).parse()
+        print(ASTprinter().print(expression))
+    except SyntaxError as error:
+        print(f"Parse error: {error}")
 
 # main loop
 if __name__ == "__main__":
@@ -229,10 +335,7 @@ if __name__ == "__main__":
         while True:
             try:
                 get_input = input()
-                scanner = Scanner(get_input)
-                tokens = scanner.scanTokens()
-                for token in tokens:
-                    print(token)
+                parse_and_print(get_input)
             except KeyboardInterrupt:
                 break
 
@@ -242,15 +345,10 @@ if __name__ == "__main__":
         with open(file, "r") as f:
             get_input = f.read()
 
-        print(get_input)
-        scanner = Scanner(get_input)
-        tokens = scanner.scanTokens()
-        for token in tokens:
-            print(token)
+        parse_and_print(get_input)
 
     # too many inputs error
     if user_input > 2:
         print("Error: Only at most 2 arguments are allowed")
-
 
 
