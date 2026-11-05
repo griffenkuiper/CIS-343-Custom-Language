@@ -203,6 +203,15 @@ class Unary(Expression):
         self.operator = operator
         self.right = right
 
+class Statement:
+    pass
+class Print_Statement(Statement):
+    def __init__(self, expression):
+        self.expression = expression
+class Expression_Statement(Statement):
+    def __init__(self, expression):
+        self.expression = expression
+
 class ASTprinter:
     def print(self, expression):
         if isinstance(expression, Binary):
@@ -222,13 +231,46 @@ class Parser:
         self.current = 0
 
     def parse(self):
-        expression = self.expression()
-        if not self.check("EOF"):
-            token = self.peek()
+        statements = []
+
+        while not self.is_at_end():
+            try:
+                statements.append(self.statement())
+
+            except SyntaxError as error:
+                print(f"Parse error: {error}")
+                self.synchronize()
+
+        return statements
+
+    def synchronize(self):
+        while not self.is_at_end():
+            if self.previous().type == "SEMICOLON":
+                return
+            if self.peek().type in ["CLASS", "FUN", "VAR", "FOR", "IF", "WHILE", "PRINT", "RETURN"]:
+                return
+            self.advance()
+
+    def statement(self):
+        if self.match("PRINT"):
+            return self.print_statement()
+        return self.expression_statement()
+
+    def print_statement(self):
+        value = self.expression()
+        if not self.match("SEMICOLON"):
             raise SyntaxError(
-                f"Unexpected token {token.lexeme!r} on line {token.line}"
+                f"Expected ';' after value on line {self.peek().line}"
             )
-        return expression
+        return Print_Statement(value)
+
+    def expression_statement(self):
+        expr = self.expression()
+        if not self.match("SEMICOLON"):
+            raise SyntaxError(
+                f"Expected ';' after expression on line {self.peek().line}"
+            )
+        return Expression_Statement(expr)
 
     def match(self, *types):
         for token_type in types:
@@ -319,12 +361,62 @@ class Parser:
         )
 
 
-def parse_and_print(source):
-    try:
-        expression = Parser(Scanner(source).scanTokens()).parse()
-        print(ASTprinter().print(expression))
-    except SyntaxError as error:
-        print(f"Parse error: {error}")
+def parse_and_interpret(source):
+    statements = Parser(Scanner(source).scanTokens()).parse()
+    Interpreter().interpret(statements)
+
+class Interpreter:
+    def interpret(self, statements):
+        for statement in statements:
+            self.execute(statement)
+
+    def execute(self, statement):
+        if isinstance(statement, Print_Statement):
+            value = self.evaluate(statement.expression)
+            print(value)
+        elif isinstance(statement, Expression_Statement):
+            self.evaluate(statement.expression)
+
+    def evaluate(self, expression):
+        if isinstance(expression, Literal):
+            return expression.value
+        elif isinstance(expression, Grouping):
+            return self.evaluate(expression.expression)
+        elif isinstance(expression, Unary):
+            right = self.evaluate(expression.right)
+            if expression.operator == "-":
+                return -right
+            elif expression.operator == "!":
+                return not right
+        elif isinstance(expression, Binary):
+            left = self.evaluate(expression.left)
+            right = self.evaluate(expression.right)
+            if expression.operator == "+":
+                return left + right
+            elif expression.operator == "-":
+                return left - right
+            elif expression.operator == "*":
+                return left * right
+            elif expression.operator == "/":
+                return left / right
+            elif expression.operator == ">":
+                return left > right
+            elif expression.operator == ">=":
+                return left >= right
+            elif expression.operator == "<":
+                return left < right
+            elif expression.operator == "<=":
+                return left <= right
+            elif expression.operator == "==":
+                return left == right
+            elif expression.operator == "!=":
+                return left != right
+    def is_truthy(self, value):
+        if value is None:
+            return False
+        if value is False:
+            return False
+        return True
 
 # main loop
 if __name__ == "__main__":
@@ -335,7 +427,7 @@ if __name__ == "__main__":
         while True:
             try:
                 get_input = input()
-                parse_and_print(get_input)
+                parse_and_interpret(get_input)
             except KeyboardInterrupt:
                 break
 
@@ -345,7 +437,7 @@ if __name__ == "__main__":
         with open(file, "r") as f:
             get_input = f.read()
 
-        parse_and_print(get_input)
+        parse_and_interpret(get_input)
 
     # too many inputs error
     if user_input > 2:
