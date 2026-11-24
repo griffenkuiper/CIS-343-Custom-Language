@@ -212,6 +212,24 @@ class Expression_Statement(Statement):
     def __init__(self, expression):
         self.expression = expression
 
+class Variable(Expression):
+    def __init__(self, name):
+        self.name = name
+
+class Assign(Expression):
+    def __init__(self, name, value):
+        self.name = name
+        self.value = value
+
+class Variable_Statement(Statement):
+    def __init__(self, name, initializer):
+        self.name = name
+        self.initializer = initializer
+
+class Block_Statement(Statement):
+    def __init__(self, statements):
+        self.statements = statements
+
 class ASTprinter:
     def print(self, expression):
         if isinstance(expression, Binary):
@@ -235,7 +253,7 @@ class Parser:
 
         while not self.is_at_end():
             try:
-                statements.append(self.statement())
+                statements.append(self.declaration())
 
             except SyntaxError as error:
                 print(f"Parse error: {error}")
@@ -251,9 +269,28 @@ class Parser:
                 return
             self.advance()
 
+    def assignment(self):
+        expr = self.equality()
+
+        if self.match("EQUAL"):
+            value = self.assignment()
+
+            if isinstance(expr, Variable):
+                return Assign(expr.name, value)
+
+            raise SyntaxError(
+                f"Invalid assignment target on line {self.previous().line}"
+            )
+
+        return expr
+    
     def statement(self):
         if self.match("PRINT"):
             return self.print_statement()
+
+        if self.match("LEFT_BRACE"):
+            return Block_Statement(self.block())
+
         return self.expression_statement()
 
     def print_statement(self):
@@ -263,7 +300,50 @@ class Parser:
                 f"Expected ';' after value on line {self.peek().line}"
             )
         return Print_Statement(value)
+    
+    def declaration(self):
+        if self.match("VAR"):
+            return self.var_declaration()
 
+        if self.check("RIGHT_BRACE"):
+            raise SyntaxError(
+                f"Unmatched '}}' on line {self.peek().line}"
+            )
+
+        return self.statement()
+
+    def var_declaration(self):
+        if not self.check("IDENTIFIER"):
+            raise SyntaxError(
+                f"Expected variable name on line {self.peek().line}"
+            )
+
+        name = self.advance()
+
+        initializer = None
+
+        if self.match("EQUAL"):
+            initializer = self.expression()
+
+        if not self.match("SEMICOLON"):
+            raise SyntaxError(
+                f"Expected ';' after variable declaration on line {self.peek().line}"
+            )
+
+        return Variable_Statement(name.lexeme, initializer)
+
+    def block(self):
+        statements = []
+
+        while not self.check("RIGHT_BRACE") and not self.is_at_end():
+            statements.append(self.declaration())
+
+        if not self.match("RIGHT_BRACE"):
+            raise SyntaxError(
+                f"Unmatched '{{' on line {self.peek().line}"
+            )
+
+        return statements
     def expression_statement(self):
         expr = self.expression()
         if not self.match("SEMICOLON"):
@@ -297,7 +377,7 @@ class Parser:
         return self.tokens[self.current - 1]
 
     def expression(self):
-        return self.equality()
+        return self.assignment()
 
     def equality(self):
         expr = self.comparison()
@@ -355,6 +435,8 @@ class Parser:
                 )
             return Grouping(expr)
         token = self.peek()
+        if self.match("IDENTIFIER"):
+            return Variable(token.lexeme)
         raise SyntaxError(
             f"Expected an expression on line {token.line}; "
             f"found {token.lexeme or token.type}"
@@ -365,17 +447,71 @@ def parse_and_interpret(source):
     statements = Parser(Scanner(source).scanTokens()).parse()
     Interpreter().interpret(statements)
 
+
+class Environment:
+    def __init__(self, enclosing=None):
+        self.values = {}
+        self.enclosing = enclosing
+
+    def define(self, name, value):
+        if name in self.values:
+            raise RuntimeError(f"Variable '{name}' already declared")
+        self.values[name] = value
+
+    def get(self, name):
+        if name in self.values:
+            return self.values[name]
+
+        if self.enclosing is not None:
+            return self.enclosing.get(name)
+
+        raise RuntimeError(f"Undefined variable '{name}'")
+
+    def assign(self, name, value):
+        if name in self.values:
+            self.values[name] = value
+            return
+
+        if self.enclosing is not None:
+            self.enclosing.assign(name, value)
+            return
+
+        raise RuntimeError(f"Undefined variable '{name}'")
+    
 class Interpreter:
+    def __init__(self):
+        self.environment = Environment()
     def interpret(self, statements):
         for statement in statements:
-            self.execute(statement)
+            try:
+                self.execute(statement)
+            except (RuntimeError, TypeError, ZeroDivisionError) as error:
+                print(f"Runtime error: {error}")
 
     def execute(self, statement):
         if isinstance(statement, Print_Statement):
             value = self.evaluate(statement.expression)
             print(value)
+
         elif isinstance(statement, Expression_Statement):
             self.evaluate(statement.expression)
+
+        elif isinstance(statement, Variable_Statement):
+            value = None
+
+            if statement.initializer is not None:
+                value = self.evaluate(statement.initializer)
+
+            self.environment.define(statement.name, value)
+
+        elif isinstance(statement, Block_Statement):
+            previous = self.environment
+
+            try:
+                self.environment = Environment(previous)
+                self.interpret(statement.statements)
+            finally:
+                self.environment = previous
 
     def evaluate(self, expression):
         if isinstance(expression, Literal):
@@ -411,6 +547,14 @@ class Interpreter:
                 return left == right
             elif expression.operator == "!=":
                 return left != right
+            elif isinstance(expression, Variable):
+                return self.environment.get(expression.name)
+
+            elif isinstance(expression, Assign):
+                value = self.evaluate(expression.value)
+                self.environment.assign(expression.name, value)
+                return value
+            
     def is_truthy(self, value):
         if value is None:
             return False
